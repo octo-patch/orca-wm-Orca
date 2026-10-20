@@ -130,8 +130,10 @@ The supported API judge aliases are:
 | `gemini3.1` | Gemini official API or AiHubMix fallback |
 | `gpt5.4` | OpenAI official API or AiHubMix fallback |
 | `doubao2.0` | Doubao official API or AiHubMix fallback |
-| `minimax-m3` | MiniMax official API or AiHubMix fallback |
-| `minimax-m2.7` | MiniMax official API or AiHubMix fallback |
+| `minimax-m3.1-flash` | MiniMax official API (recommended MiniMax judge) |
+| `minimax-m3` | MiniMax official API or existing AiHubMix fallback |
+
+MiniMax judges run in Flash, then M3 order in `--all-api-models` and `--all-models`. Flash requires a valid `[minimax]` key with `--provider-mode auto` or `official`; its aggregator route is not supported. The explicit legacy `--model minimax-m2.7` remains accepted, and existing legacy summaries remain included when regenerating score tables. It is excluded from ordinary judge choices and all-model runs.
 
 The MiniMax provider defaults to the global endpoint (`https://api.minimax.io/v1`). To use the mainland China site instead, set `base_url = "https://api.minimaxi.com/v1"` under `[minimax]` in `env.toml`.
 
@@ -237,7 +239,7 @@ The evaluator uses `query` and `lang`; reference targets are never sent to the j
 
 ## Tests
 
-Run the offline dataset-loading regression test with:
+Run the offline dataset and API request regression tests with:
 
 ```bash
 python -m unittest discover -s tests

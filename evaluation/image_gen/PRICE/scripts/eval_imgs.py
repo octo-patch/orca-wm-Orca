@@ -33,9 +33,12 @@ API_JUDGE_MODEL_ALIASES = {
     "gemini3.1": "gemini-3.1-pro-preview",
     "gpt5.4": "gpt-5.4-high",
     "doubao2.0": "doubao-seed-2-0-pro",
+    "minimax-m3.1-flash": "MiniMax-M3.1-Flash",
     "minimax-m3": "MiniMax-M3",
-    "minimax-m2.7": "MiniMax-M2.7",
 }
+
+# Keep explicit legacy requests and historical score files addressable.
+LEGACY_API_JUDGE_MODEL_ALIASES = {"minimax-m2.7": "MiniMax-M2.7"}
 
 # Optional direct-to-provider routing (see docs/PUBLIC_OFFICIAL_API_JUDGES_PLAN_zh.md).
 # [aihubmix] in env.toml remains the default fallback; configuring a provider's own
@@ -44,6 +47,7 @@ JUDGE_ALIAS_PROVIDER = {
     "gemini3.1": "gemini",
     "gpt5.4": "openai",
     "doubao2.0": "doubao",
+    "minimax-m3.1-flash": "minimax",
     "minimax-m3": "minimax",
     "minimax-m2.7": "minimax",
 }
@@ -67,6 +71,7 @@ JUDGE_ALIAS_OFFICIAL_MODEL_ID = {
     "gemini3.1": "gemini-3.1-pro-preview",
     "gpt5.4": "gpt-5.4-high",
     "doubao2.0": "doubao-seed-2-0-pro",
+    "minimax-m3.1-flash": "MiniMax-M3.1-Flash",
     "minimax-m3": "MiniMax-M3",
     "minimax-m2.7": "MiniMax-M2.7",
 }
@@ -75,8 +80,14 @@ PROVIDER_MODE_CHOICES = ("auto", "official", "aihubmix")
 
 GEMMA4_JUDGE_ALIAS = "gemma4"
 LOCAL_JUDGE_ALIASES = frozenset({GEMMA4_JUDGE_ALIAS})
-ALL_JUDGE_ALIASES = sorted(API_JUDGE_MODEL_ALIASES) + sorted(LOCAL_JUDGE_ALIASES)
-JUDGE_SCORES_MD_ALIAS_ORDER = [GEMMA4_JUDGE_ALIAS, *sorted(API_JUDGE_MODEL_ALIASES)]
+# Preserve the existing order of other providers; recommend Flash first for MiniMax.
+ACTIVE_API_JUDGE_ALIASES = sorted(
+    alias for alias in API_JUDGE_MODEL_ALIASES if JUDGE_ALIAS_PROVIDER[alias] != "minimax"
+) + ["minimax-m3.1-flash", "minimax-m3"]
+ALL_JUDGE_ALIASES = ACTIVE_API_JUDGE_ALIASES + sorted(LOCAL_JUDGE_ALIASES)
+JUDGE_SCORES_MD_ALIAS_ORDER = [
+    GEMMA4_JUDGE_ALIAS, *ACTIVE_API_JUDGE_ALIASES, *LEGACY_API_JUDGE_MODEL_ALIASES
+]
 
 DEFAULT_JUDGE_MODEL = "gemini3.1"
 DEFAULT_EVAL_PROMPT = "0601.py"
@@ -174,6 +185,15 @@ def resolve_alias_route(
         raise ValueError(f"invalid provider_mode: {provider_mode!r}")
 
     provider = JUDGE_ALIAS_PROVIDER[alias]
+
+    # Flash's aggregator model ID and availability have not been verified.
+    if alias == "minimax-m3.1-flash" and (
+        provider_mode == "aihubmix" or not has_valid_official_key(provider, env_config)
+    ):
+        raise ValueError(
+            "minimax-m3.1-flash requires a valid [minimax] api_key and auto or "
+            "official routing; its aihubmix route is not supported"
+        )
 
     if provider_mode == "official":
         if not has_valid_official_key(provider, env_config):
@@ -278,7 +298,15 @@ def warn_missing_sample_ids(
 
 
 def resolve_judge_model_id(alias: str) -> str:
+    if alias in LEGACY_API_JUDGE_MODEL_ALIASES:
+        return LEGACY_API_JUDGE_MODEL_ALIASES[alias]
     return API_JUDGE_MODEL_ALIASES[alias]
+
+
+def parse_judge_alias(alias: str) -> str:
+    if alias not in ALL_JUDGE_ALIASES and alias not in LEGACY_API_JUDGE_MODEL_ALIASES:
+        raise argparse.ArgumentTypeError(f"unknown judge alias: {alias!r}")
+    return alias
 
 
 def eval_prompt_template_name(eval_prompt: str | Path) -> str:
@@ -843,11 +871,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default=DEFAULT_JUDGE_MODEL,
-        choices=ALL_JUDGE_ALIASES,
+        type=parse_judge_alias,
+        metavar="{" + ",".join(ALL_JUDGE_ALIASES) + "}",
         help=f"Judge model alias (default: {DEFAULT_JUDGE_MODEL}). API aliases: "
         + ", ".join(
             f"{alias} ({API_JUDGE_MODEL_ALIASES[alias]})"
-            for alias in sorted(API_JUDGE_MODEL_ALIASES)
+            for alias in ACTIVE_API_JUDGE_ALIASES
         )
         + f". Local alias: {GEMMA4_JUDGE_ALIAS} (requires envs/gemma4/, see its README).",
     )
@@ -882,7 +911,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "API (see env.toml [openai]/[gemini]/[doubao]) when a valid key is configured "
         "for that judge's provider, else fall back to [aihubmix]. official: require an "
         "official key for every judge run. aihubmix: always use the aihubmix aggregator, "
-        "ignoring any configured official provider tables.",
+        "ignoring any configured official provider tables. MiniMax Flash requires "
+        "[minimax] credentials and auto or official mode.",
     )
     parser.add_argument(
         "--eval-prompt",
@@ -944,11 +974,11 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.all_models:
         run_gemma4 = True
-        api_aliases = sorted(API_JUDGE_MODEL_ALIASES)
+        api_aliases = list(ACTIVE_API_JUDGE_ALIASES)
         write_md = True
     elif args.all_api_models:
         run_gemma4 = False
-        api_aliases = sorted(API_JUDGE_MODEL_ALIASES)
+        api_aliases = list(ACTIVE_API_JUDGE_ALIASES)
         write_md = True
     elif args.model in LOCAL_JUDGE_ALIASES:
         run_gemma4 = True
